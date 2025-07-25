@@ -1,0 +1,177 @@
+Sub Итогприбыли()
+    Dim wsSummary As Worksheet, wsSales As Worksheet, wsPurchases As Workbook
+    Dim wsCount As Worksheet ' Для таблицы с количеством продаж
+    Dim lastRowSales As Long, lastRowPurchases As Long, outputRow As Long
+    Dim i As Long, j As Long
+    Dim art As String, receivedValue As Double, costValue As Double, deliveryCost As Double
+    Dim salesCol As Long, purchasesCol As Long, artCol As Long, deliveryCol As Long, qtyCol As Long
+    Dim totalProfit As Double
+    Dim dictArtCount As Object ' Для подсчета количества по артикулам
+    
+    On Error Resume Next
+    Application.ScreenUpdating = False
+    Application.Calculation = xlCalculationManual
+    Application.DisplayAlerts = False
+    
+    ' Создаем объект Dictionary для подсчета количества
+    Set dictArtCount = CreateObject("Scripting.Dictionary")
+    
+    ' Создаем новый лист для сводной таблицы
+    Sheets("Сводная таблица").Delete
+    Sheets("Количество продаж").Delete ' Удаляем старую таблицу количества, если есть
+    
+    Set wsSummary = Worksheets.Add(After:=Worksheets(Worksheets.Count))
+    wsSummary.Name = "Сводная таблица"
+    
+    ' Создаем лист для таблицы количества продаж
+    Set wsCount = Worksheets.Add(After:=wsSummary)
+    wsCount.Name = "Количество продаж"
+    
+    ' Заголовки столбцов для сводной таблицы
+    wsSummary.Range("A1:D1").Value = Array("Артикул", "Получили с ВБ", "Себестоимость", "Прибыль")
+    outputRow = 2
+    
+    ' Заголовки для таблицы количества
+    wsCount.Range("A1:B1").Value = Array("Артикул", "Количество продаж")
+    
+    ' Получаем лист с продажами
+    Set wsSales = ThisWorkbook.Worksheets("Sheet1")
+    
+    ' Пытаемся открыть файл с закупками
+    Set wsPurchases = Workbooks("Файл с закупками.xlsx")
+    
+    ' Находим номера столбцов по заголовкам
+    artCol = FindColumnByHeader(wsSales, "Артикул поставщика")
+    salesCol = FindColumnByHeader(wsSales, "К перечислению Продавцу за реализованный Товар")
+    deliveryCol = FindColumnByHeader(wsSales, "Услуги по доставке товара покупателю")
+    qtyCol = FindColumnByHeader(wsSales, "Кол-во")
+    
+    If artCol = 0 Or salesCol = 0 Or deliveryCol = 0 Or qtyCol = 0 Then
+        GoTo CleanUp
+    End If
+    
+    lastRowSales = wsSales.Cells(wsSales.Rows.Count, artCol).End(xlUp).Row
+    
+    ' Обрабатываем данные продаж
+    For i = 2 To lastRowSales
+        art = Trim(wsSales.Cells(i, artCol).Value) ' Артикул
+        If art = "" Then GoTo NextIteration ' Пропускаем пустые артикулы
+        
+        ' Подсчитываем количество продаж по артикулам
+        If dictArtCount.Exists(art) Then
+            dictArtCount(art) = dictArtCount(art) + GetNumericValue(wsSales.Cells(i, qtyCol))
+        Else
+            dictArtCount.Add art, GetNumericValue(wsSales.Cells(i, qtyCol))
+        End If
+        
+        ' Получаем значение "К перечислению" и стоимость доставки
+        receivedValue = GetNumericValue(wsSales.Cells(i, salesCol))
+        deliveryCost = GetNumericValue(wsSales.Cells(i, deliveryCol))
+        
+        ' Если файл с закупками открыт, ищем себестоимость
+        costValue = 0
+        If Not wsPurchases Is Nothing Then
+            lastRowPurchases = wsPurchases.Worksheets(1).Cells(wsPurchases.Worksheets(1).Rows.Count, "A").End(xlUp).Row
+            For j = 2 To lastRowPurchases
+                If Trim(wsPurchases.Worksheets(1).Cells(j, 1).Value) = art Then
+                    costValue = GetNumericValue(wsPurchases.Worksheets(1).Cells(j, 4))
+                    Exit For
+                End If
+            Next j
+        End If
+        
+        ' Заполняем данные в сводную таблицу
+        wsSummary.Cells(outputRow, 1).Value = art
+        wsSummary.Cells(outputRow, 2).Value = receivedValue
+        wsSummary.Cells(outputRow, 3).Value = costValue
+        wsSummary.Cells(outputRow, 4).Value = receivedValue - costValue - deliveryCost
+        
+        ' Суммируем общую прибыль
+        totalProfit = totalProfit + (receivedValue - costValue - deliveryCost)
+        
+        outputRow = outputRow + 1
+        
+NextIteration:
+    Next i
+    
+    ' Сортируем основную таблицу по артикулам от А до Я
+    With wsSummary
+        .Sort.SortFields.Clear
+        .Sort.SortFields.Add Key:=.Range("A2:A" & outputRow - 1), SortOn:=xlSortOnValues, Order:=xlAscending
+        .Sort.SetRange .Range("A1:D" & outputRow - 1)
+        .Sort.Header = xlYes
+        .Sort.Apply
+    End With
+    
+    ' Заполняем таблицу количества продаж
+    Dim countRow As Long: countRow = 2
+    Dim keys As Variant, key As Variant
+    keys = dictArtCount.Keys
+    
+    For Each key In keys
+        wsCount.Cells(countRow, 1).Value = key
+        wsCount.Cells(countRow, 2).Value = dictArtCount(key)
+        countRow = countRow + 1
+    Next key
+    
+    ' Сортируем таблицу количества по артикулам
+    With wsCount
+        .Sort.SortFields.Clear
+        .Sort.SortFields.Add Key:=.Range("A2:A" & countRow - 1), SortOn:=xlSortOnValues, Order:=xlAscending
+        .Sort.SetRange .Range("A1:B" & countRow - 1)
+        .Sort.Header = xlYes
+        .Sort.Apply
+    End With
+    
+    ' Форматируем таблицы
+    With wsSummary
+        .Columns("A:D").AutoFit
+        .Range("A1:D1").Font.Bold = True
+        .Range("A1:D1").Interior.Color = RGB(200, 200, 200)
+        .Range("A1:D" & outputRow - 1).Borders.LineStyle = xlContinuous
+        .Range("B2:D" & outputRow - 1).NumberFormat = "#,##0.00"
+        
+        ' Добавляем итоговую прибыль
+        .Cells(outputRow, 3).Value = "Итого прибыль:"
+        .Cells(outputRow, 4).Value = totalProfit
+        .Cells(outputRow, 4).Font.Bold = True
+        .Cells(outputRow, 4).NumberFormat = "#,##0.00"
+    End With
+    
+    With wsCount
+        .Columns("A:B").AutoFit
+        .Range("A1:B1").Font.Bold = True
+        .Range("A1:B1").Interior.Color = RGB(200, 200, 200)
+        .Range("A1:B" & countRow - 1).Borders.LineStyle = xlContinuous
+        
+        ' Добавляем итоговое количество
+        .Cells(countRow, 1).Value = "Итого:"
+        .Cells(countRow, 2).Value = Application.Sum(.Range("B2:B" & countRow - 1))
+        .Cells(countRow, 1).Font.Bold = True
+        .Cells(countRow, 2).Font.Bold = True
+    End With
+    
+CleanUp:
+    Application.ScreenUpdating = True
+    Application.Calculation = xlCalculationAutomatic
+    Application.DisplayAlerts = True
+    On Error GoTo 0
+End Sub
+
+Function FindColumnByHeader(ws As Worksheet, headerText As String) As Long
+    Dim rng As Range
+    Set rng = ws.Rows(1).Find(headerText, LookIn:=xlValues, LookAt:=xlWhole, MatchCase:=False)
+    If Not rng Is Nothing Then FindColumnByHeader = rng.Column
+End Function
+
+Function GetNumericValue(cell As Range) As Double
+    On Error Resume Next
+    If IsNumeric(cell.Value) Then
+        GetNumericValue = cell.Value
+    ElseIf IsNumeric(Replace(cell.Value, ",", ".")) Then
+        GetNumericValue = Replace(cell.Value, ",", ".")
+    Else
+        GetNumericValue = 0
+    End If
+    On Error GoTo 0
+End Function

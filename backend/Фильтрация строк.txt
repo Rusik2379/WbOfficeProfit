@@ -1,0 +1,108 @@
+Sub ФильтрацияСтрок()
+    Dim ws As Worksheet
+    Dim columnsToDelete As Variant
+    Dim colName As Variant
+    Dim col As Range
+    Dim found As Boolean
+    Dim i As Long, j As Long, lastRow As Long
+    Dim justificationCol As Range, logisticsCol As Range, deliveryCol As Range
+    Dim quantityCol As Range, deliveryValue As Variant
+    
+    Application.ScreenUpdating = False
+    Application.Calculation = xlCalculationManual
+    Application.DisplayAlerts = False
+    
+    Set ws = ThisWorkbook.Sheets("Sheet1")
+    
+    ' Список столбцов для удаления
+    columnsToDelete = Array("Номер поставки", "Код номенклатуры", "Бренд", "Размер", "Баркод", "Дата заказа покупателем", _
+        "Согласованный продуктовый дисконт, %", "Промокод, %", "Итоговая согласованная скидка, %", _
+        "Цена розничная с учетом согласованной скидки", "Размер снижения кВВ из-за рейтинга, %", _
+        "Размер изменения кВВ из-за акции, %", "Скидка постоянного Покупателя (СПП), %", "Размер кВВ, %", _
+        "Размер кВВ без НДС, % Базовый", "Итоговый кВВ без НДС, %", _
+        "Вознаграждение с продаж до вычета услуг поверенного, без НДС", _
+        "Возмещение за выдачу и возврат товаров на ПВЗ", "Эквайринг/Комиссии за организацию платежей", _
+        "Размер комиссии за эквайринг/Комиссии за организацию платежей, %", _
+        "Тип платежа за Эквайринг/Комиссии за организацию платежей", "Количество возврата", _
+        "Дата начала действия фиксации", "Дата конца действия фиксации", "Признак услуги платной доставки", _
+        "Общая сумма штрафов", "Корректировка Вознаграждения Вайлдберриз (ВВ)", _
+        "Стикер МП", "Наименование банка-эквайера", _
+        "Номер офиса", "Наименование офиса доставки", "ИНН партнера", "Партнер", "Склад", "Страна", _
+        "Тип коробов", "Номер таможенной декларации", "Номер сборочного задания", "Код маркировки", _
+        "ШК", "Srid", "Возмещение издержек по перевозке/по складским операциям с товаром", _
+        "Организатор перевозки", "Хранение", "Удержания", "Платная приемка", _
+        "Фиксированный коэффициент склада по поставке", "Признак продажи юридическому лицу", _
+        "Номер короба для платной приемки", "Скидка по программе софинансирования", "Скидка Wibes, %", _
+        "Сумма удержанная за начисленные баллы программы лояльности", _
+        "Компенсация скидки по программе лояльности")
+
+    ' Удаляем ненужные столбцы
+    For i = ws.Cells(1, ws.Columns.Count).End(xlToLeft).Column To 1 Step -1
+        Set col = ws.Cells(1, i)
+        found = False
+        
+        For Each colName In columnsToDelete
+            If LCase(Trim(col.Value)) = LCase(Trim(colName)) Then
+                found = True
+                Exit For
+            End If
+        Next colName
+        
+        If found Then col.EntireColumn.Delete
+    Next i
+    
+    ' Находим ключевые столбцы
+    Set justificationCol = ws.Rows(1).Find(What:="Обоснование для оплаты", LookIn:=xlValues, LookAt:=xlWhole, MatchCase:=False)
+    Set logisticsCol = ws.Rows(1).Find(What:="Виды логистики, штрафов и корректировок ВВ", LookIn:=xlValues, LookAt:=xlWhole, MatchCase:=False)
+    Set deliveryCol = ws.Rows(1).Find(What:="Услуги по доставке товара покупателю", LookIn:=xlValues, LookAt:=xlWhole, MatchCase:=False)
+    Set quantityCol = ws.Rows(1).Find(What:="Кол-во", LookIn:=xlValues, LookAt:=xlWhole, MatchCase:=False)
+    
+    If Not justificationCol Is Nothing And Not logisticsCol Is Nothing And Not deliveryCol Is Nothing And Not quantityCol Is Nothing Then
+        lastRow = ws.Cells(ws.Rows.Count, justificationCol.Column).End(xlUp).Row
+        
+        ' Фильтруем строки (оставляем только Логистика и Продажа)
+        For j = lastRow To 2 Step -1
+            Dim cellValue As String, logisticsValue As String
+            cellValue = LCase(Trim(ws.Cells(j, justificationCol.Column).Value))
+            logisticsValue = Trim(ws.Cells(j, logisticsCol.Column).Value)
+            
+            If (cellValue <> "логистика" And cellValue <> "продажа") Or _
+               (logisticsValue <> "К клиенту при продаже" And logisticsValue <> "") Then
+                ws.Rows(j).Delete
+            End If
+        Next j
+        
+        ' Удаляем столбец "Виды логистики..."
+        logisticsCol.EntireColumn.Delete
+        
+        ' Обновляем последнюю строку
+        lastRow = ws.Cells(ws.Rows.Count, justificationCol.Column).End(xlUp).Row
+        
+        ' Обрабатываем пары строк (Логистика -> Продажа)
+        For j = 2 To lastRow Step 1
+            If j + 1 <= lastRow Then
+                ' Проверяем что текущая строка - Логистика (кол-во = 0), следующая - Продажа (кол-во = 1)
+                If LCase(Trim(ws.Cells(j, justificationCol.Column).Value)) = "логистика" And _
+                   ws.Cells(j, quantityCol.Column).Value = 0 And _
+                   LCase(Trim(ws.Cells(j + 1, justificationCol.Column).Value)) = "продажа" And _
+                   ws.Cells(j + 1, quantityCol.Column).Value = 1 And _
+                   Trim(ws.Cells(j, ws.Rows(1).Find(What:="Артикул поставщика").Column).Value) = _
+                   Trim(ws.Cells(j + 1, ws.Rows(1).Find(What:="Артикул поставщика").Column).Value) Then
+                   
+                    ' Переносим значение доставки из строки Логистика в строку Продажа
+                    deliveryValue = ws.Cells(j, deliveryCol.Column).Value
+                    ws.Cells(j + 1, deliveryCol.Column).Value = deliveryValue
+                    
+                    ' Удаляем строку Логистика
+                    ws.Rows(j).Delete
+                    lastRow = lastRow - 1
+                    j = j - 1 ' Корректируем счетчик после удаления строки
+                End If
+            End If
+        Next j
+    End If
+    
+    Application.ScreenUpdating = True
+    Application.Calculation = xlCalculationAutomatic
+    Application.DisplayAlerts = True
+End Sub
